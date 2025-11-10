@@ -1,0 +1,438 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Snap-to-Loop — Camera Slideshow</title>
+  <link rel="preconnect" href="https://unpkg.com">
+  <!-- Tailwind (optional, for quick clean UI) -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- GIF encoder (tiny, battle-tested) -->
+  <script src="https://unpkg.com/gif.js@0.2.0/dist/gif.js"></script>
+  <style>
+    /* prevent iOS pull-to-refresh jank in full-height sections */
+    html, body { height: 100%; background: #0b1020; }
+    .glass { background: rgba(255,255,255,0.06); backdrop-filter: blur(8px); }
+    .btn { @apply px-4 py-2 rounded-xl font-medium border border-white/20 hover:border-white/40 active:scale-[.98] transition; }
+    .btn-primary { @apply bg-white text-black hover:bg-slate-100; }
+    .btn-ghost { @apply text-white/90; }
+    .badge { @apply text-xs px-2 py-1 rounded-md bg-white/10 text-white/80 border border-white/10; }
+    .thumb { aspect-ratio: 1/1; object-fit: cover; }
+    video, canvas { border-radius: 1rem; }
+  </style>
+</head>
+<body class="text-white">
+  <main class="max-w-5xl mx-auto p-4 md:p-6 space-y-6">
+    <header class="flex items-center justify-between">
+      <h1 class="text-xl md:text-2xl font-semibold">📸 Snap-to-Loop</h1>
+      <div class="flex items-center gap-2">
+        <span id="frameCount" class="badge">0 frames</span>
+        <span id="status" class="badge">idle</span>
+      </div>
+    </header>
+
+    <!-- Camera + capture -->
+    <section class="grid md:grid-cols-2 gap-6">
+      <div class="glass rounded-2xl p-4 space-y-4">
+        <div class="flex items-center justify-between">
+          <h2 class="text-lg font-medium">Live Camera</h2>
+          <div class="flex gap-2">
+            <button id="btnStart" class="btn btn-primary">Start Camera</button>
+            <button id="btnFlip" class="btn btn-ghost" title="Flip camera">Flip</button>
+          </div>
+        </div>
+        <video id="cam" playsinline autoplay muted class="w-full bg-black aspect-[3/4] md:aspect-video"></video>
+        <button id="btnSnap" class="btn btn-primary w-full">Snap Photo</button>
+      </div>
+
+      <div class="glass rounded-2xl p-4 space-y-4">
+        <div class="flex items-center justify-between">
+          <h2 class="text-lg font-medium">Preview / Slideshow</h2>
+          <div class="flex items-center gap-3">
+            <label class="text-sm text-white/80">Delay
+              <input id="delayMs" type="number" min="100" step="50" value="500"
+                     class="ml-2 w-20 rounded-md bg-white/10 border border-white/20 px-2 py-1">
+              ms
+            </label>
+            <button id="btnClear" class="btn btn-ghost">Clear</button>
+          </div>
+        </div>
+        <canvas id="stage" class="w-full bg-black aspect-video"></canvas>
+        <div id="thumbs" class="grid grid-cols-6 gap-2 max-h-36 overflow-auto"></div>
+      </div>
+    </section>
+
+    <!-- Export -->
+    <section class="glass rounded-2xl p-4 space-y-3">
+      <h2 class="text-lg font-medium">Export</h2>
+      <div class="grid md:grid-cols-2 gap-4">
+        <div class="space-y-2">
+          <div class="flex items-center gap-3">
+            <label class="text-sm text-white/80">GIF size (px wide)
+              <input id="gifWidth" type="number" min="128" step="64" value="640"
+                     class="ml-2 w-24 rounded-md bg-white/10 border border-white/20 px-2 py-1">
+            </label>
+            <label class="text-sm text-white/80">Loops
+              <input id="loops" type="number" min="1" step="1" value="1"
+                     class="ml-2 w-16 rounded-md bg-white/10 border border-white/20 px-2 py-1">
+            </label>
+          </div>
+          <button id="btnExportGif" class="btn btn-primary w-full">Export GIF</button>
+          <p class="text-xs text-white/70">GIF exports are great for quick sharing, but can be large.</p>
+        </div>
+
+        <div class="space-y-2">
+          <div class="flex items-center gap-3">
+            <label class="text-sm text-white/80">FPS
+              <input id="fps" type="number" min="1" step="1" value="2"
+                     class="ml-2 w-16 rounded-md bg-white/10 border border-white/20 px-2 py-1">
+            </label>
+            <label class="text-sm text-white/80">Loops
+              <input id="loopsVid" type="number" min="1" step="1" value="1"
+                     class="ml-2 w-16 rounded-md bg-white/10 border border-white/20 px-2 py-1">
+            </label>
+          </div>
+          <button id="btnExportVideo" class="btn btn-primary w-full">Export Video (WebM/MP4*)</button>
+          <p class="text-xs text-white/70">
+            *Most browsers export WebM; Safari may export MP4/H.264. Filename will reflect the codec.
+          </p>
+        </div>
+      </div>
+      <div id="downloads" class="pt-2 grid md:grid-cols-2 gap-2"></div>
+    </section>
+  </main>
+
+  <script>
+  (() => {
+    const state = {
+      stream: null,
+      facing: 'environment',
+      frames: [],          // Array<ImageBitmap> for efficiency
+      thumbs: [],          // data URLs for quick thumb rendering
+      slideshowTimer: null,
+      slideIndex: 0,
+      delay: 500,
+      stageSize: { w: 1280, h: 720 },
+    };
+
+    // Elements
+    const el = (id) => document.getElementById(id);
+    const cam = el('cam');
+    const stage = el('stage');
+    const ctx = stage.getContext('2d');
+    const btnStart = el('btnStart');
+    const btnFlip = el('btnFlip');
+    const btnSnap = el('btnSnap');
+    const btnClear = el('btnClear');
+    const btnExportGif = el('btnExportGif');
+    const btnExportVideo = el('btnExportVideo');
+    const thumbs = el('thumbs');
+    const frameCount = el('frameCount');
+    const statusBadge = el('status');
+    const delayMs = el('delayMs');
+    const gifWidth = el('gifWidth');
+    const loops = el('loops');
+    const fps = el('fps');
+    const loopsVid = el('loopsVid');
+    const downloads = el('downloads');
+
+    // Utils
+    const setStatus = (s) => (statusBadge.textContent = s);
+    const updateCount = () => (frameCount.textContent = `${state.frames.length} frame${state.frames.length === 1 ? '' : 's'}`);
+    const aspectFit = (srcW, srcH, dstW, dstH) => {
+      const srcAR = srcW / srcH, dstAR = dstW / dstH;
+      if (srcAR > dstAR) {
+        const w = dstW, h = Math.round(dstW / srcAR);
+        return { sx: 0, sy: 0, sw: srcW, sh: srcH, dx: 0, dy: Math.round((dstH - h) / 2), dw: w, dh: h };
+      } else {
+        const h = dstH, w = Math.round(dstH * srcAR);
+        return { sx: 0, sy: 0, sw: srcW, sh: srcH, dx: Math.round((dstW - w) / 2), dy: 0, dw: w, dh: h };
+      }
+    };
+
+    // Camera control
+    async function startCamera() {
+      if (state.stream) {
+        state.stream.getTracks().forEach(t => t.stop());
+      }
+      try {
+        setStatus('requesting camera…');
+        state.stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: { ideal: state.facing }, width: { ideal: 1280 }, height: { ideal: 720 } },
+          audio: false
+        });
+        cam.srcObject = state.stream;
+        await cam.play();
+
+        // Initialize stage size to match the camera aspect (landscape default with letterbox in UI)
+        const vW = cam.videoWidth || 1280;
+        const vH = cam.videoHeight || 720;
+        const landscape = vW >= vH;
+        state.stageSize = landscape ? { w: 1280, h: 720 } : { w: 720, h: 1280 };
+        stage.width = state.stageSize.w;
+        stage.height = state.stageSize.h;
+        setStatus('camera ready');
+      } catch (err) {
+        console.error(err);
+        setStatus('camera error (check permissions/HTTPS)');
+        alert('Could not access camera. Ensure you are on HTTPS and granted permission.');
+      }
+    }
+
+    function flipCamera() {
+      state.facing = state.facing === 'environment' ? 'user' : 'environment';
+      startCamera();
+    }
+
+    // Snap current video frame
+    async function snap() {
+      if (!cam.videoWidth) return;
+      // Draw to a temp canvas sized like the video to avoid scaling artifacts
+      const temp = document.createElement('canvas');
+      temp.width = cam.videoWidth;
+      temp.height = cam.videoHeight;
+      const tctx = temp.getContext('2d', { willReadFrequently: false });
+      tctx.drawImage(cam, 0, 0);
+
+      // Convert to ImageBitmap for efficient slideshow drawing
+      const bmp = await createImageBitmap(temp);
+      state.frames.push(bmp);
+
+      // Thumb for UI
+      const fit = document.createElement('canvas');
+      fit.width = 160; fit.height = 160;
+      const fctx = fit.getContext('2d');
+      const fitBox = aspectFit(bmp.width, bmp.height, 160, 160);
+      fctx.fillStyle = '#000'; fctx.fillRect(0,0,160,160);
+      fctx.drawImage(bmp, fitBox.sx, fitBox.sy, fitBox.sw, fitBox.sh, fitBox.dx, fitBox.dy, fitBox.dw, fitBox.dh);
+      const url = fit.toDataURL('image/jpeg', 0.9);
+      state.thumbs.push(url);
+
+      renderThumbs();
+      updateCount();
+
+      // If first frame, show it. If 2+, (re)start slideshow.
+      if (state.frames.length === 1) drawFrame(bmp);
+      if (state.frames.length >= 2) startSlideshow();
+    }
+
+    function renderThumbs() {
+      thumbs.innerHTML = '';
+      state.thumbs.forEach((src, i) => {
+        const img = document.createElement('img');
+        img.src = src;
+        img.className = 'thumb w-full rounded-lg border border-white/10';
+        img.title = `Frame ${i+1}`;
+        thumbs.appendChild(img);
+      });
+    }
+
+    // Draw a single ImageBitmap to stage (letterboxed)
+    function drawFrame(bmp) {
+      const { w, h } = state.stageSize;
+      ctx.fillStyle = '#000'; ctx.fillRect(0, 0, w, h);
+      const box = aspectFit(bmp.width, bmp.height, w, h);
+      ctx.drawImage(bmp, box.sx, box.sy, box.sw, box.sh, box.dx, box.dy, box.dw, box.dh);
+    }
+
+    function startSlideshow() {
+      stopSlideshow();
+      state.delay = Math.max(100, Number(delayMs.value) || 500);
+      setStatus(`slideshow ${state.delay}ms`);
+      state.slideIndex = 0;
+      state.slideshowTimer = setInterval(() => {
+        if (state.frames.length === 0) return;
+        const bmp = state.frames[state.slideIndex % state.frames.length];
+        drawFrame(bmp);
+        state.slideIndex++;
+      }, state.delay);
+    }
+
+    function stopSlideshow() {
+      if (state.slideshowTimer) {
+        clearInterval(state.slideshowTimer);
+        state.slideshowTimer = null;
+      }
+    }
+
+    function clearAll() {
+      stopSlideshow();
+      state.frames.forEach(b => b.close && b.close());
+      state.frames = [];
+      state.thumbs = [];
+      updateCount();
+      renderThumbs();
+      ctx.clearRect(0, 0, stage.width, stage.height);
+      setStatus('cleared');
+    }
+
+    // Export GIF
+    async function exportGIF() {
+      if (state.frames.length === 0) {
+        alert('Snap at least 1 frame first.');
+        return;
+      }
+      const delay = Math.max(100, Number(delayMs.value) || 500);
+      const repeat = Math.max(1, Number(loops.value) || 1);
+      const targetW = Math.max(64, Number(gifWidth.value) || 640);
+
+      // Snapshot frames at export time
+      const frames = state.frames.slice();
+      const ar = frames[0].width / frames[0].height;
+      const targetH = Math.round(targetW / ar);
+
+      setStatus('rendering GIF…');
+
+      // Prepare a working canvas at export size
+      const work = document.createElement('canvas');
+      work.width = targetW; work.height = targetH;
+      const wctx = work.getContext('2d');
+
+      const gif = new GIF({
+        workers: 2,
+        quality: 10,         // lower = better quality, bigger file
+        workerScript: 'assets/gif.worker.js',
+        width: targetW,
+        height: targetH
+      });
+
+      // Add frames (repeat sequence `repeat` times)
+      for (let r = 0; r < repeat; r++) {
+        for (const bmp of frames) {
+          wctx.fillStyle = '#000'; wctx.fillRect(0, 0, targetW, targetH);
+          const box = aspectFit(bmp.width, bmp.height, targetW, targetH);
+          wctx.drawImage(bmp, box.sx, box.sy, box.sw, box.sh, box.dx, box.dy, box.dw, box.dh);
+          gif.addFrame(wctx, { copy: true, delay });
+        }
+      }
+
+      gif.on('finished', (blob) => {
+        const url = URL.createObjectURL(blob);
+        download(url, `slideshow_${Date.now()}.gif`);
+        setStatus('GIF ready');
+      });
+
+      gif.render();
+    }
+
+    // Export Video via MediaRecorder capturing the stage canvas at a controlled FPS
+    async function exportVideo() {
+      if (state.frames.length === 0) {
+        alert('Snap at least 1 frame first.');
+        return;
+      }
+      const frameDelay = Math.max(100, Number(delayMs.value) || 500);
+      const exportFps = Math.max(1, Number(fps.value) || 2);
+      const repeat = Math.max(1, Number(loopsVid.value) || 1);
+      const totalFrames = state.frames.length * repeat;
+
+      setStatus('recording…');
+      // Pause live slideshow while exporting for a deterministic render
+      const resume = !!state.slideshowTimer;
+      stopSlideshow();
+
+      // Drive the canvas manually at exportFps, while capturing its stream
+      const stream = stage.captureStream(exportFps);
+      // Try preferred types (Safari may support mp4; most browsers webm)
+      const typeCandidates = [
+        'video/mp4;codecs=h264',
+        'video/webm;codecs=vp9',
+        'video/webm;codecs=vp8',
+        'video/webm'
+      ];
+      const mimeType = typeCandidates.find(t => MediaRecorder.isTypeSupported(t)) || '';
+      const rec = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
+
+      const chunks = [];
+      rec.ondataavailable = (e) => { if (e.data && e.data.size) chunks.push(e.data); };
+      const stopped = new Promise(resolve => { rec.onstop = resolve; });
+      rec.start();
+
+      // Deterministic playback loop
+      let idx = 0;
+      const frames = state.frames.slice();
+      const drawNext = () => {
+        const seqIndex = Math.floor(idx) % frames.length;
+        drawFrame(frames[seqIndex]);
+        idx++;
+      };
+
+      // We want each source photo to last exactly frameDelay ms.
+      // With exportFps, we compute how many video frames per photo:
+      const framesPerPhoto = Math.max(1, Math.round((frameDelay / 1000) * exportFps));
+      const totalVideoFrames = totalFrames * framesPerPhoto;
+
+      // Render loop at exportFps
+      let rendered = 0;
+      const interval = setInterval(() => {
+        if (rendered % framesPerPhoto === 0) {
+          // advance to next photo every framesPerPhoto ticks
+          const photoAdvance = Math.floor(rendered / framesPerPhoto);
+          const photoIndex = photoAdvance % frames.length;
+          drawFrame(frames[photoIndex]);
+        }
+        rendered++;
+        if (rendered >= totalVideoFrames) {
+          clearInterval(interval);
+          rec.stop();
+        }
+      }, Math.round(1000 / exportFps));
+
+      await stopped;
+
+      const blob = new Blob(chunks, { type: rec.mimeType || 'video/webm' });
+      const ext = /mp4/.test(blob.type) ? 'mp4' : 'webm';
+      const url = URL.createObjectURL(blob);
+      addDownload(url, `slideshow_${Date.now()}.${ext}`, `${blob.type} • ${(blob.size/1024/1024).toFixed(2)} MB`);
+
+      setStatus('video ready');
+      if (resume && state.frames.length >= 2) startSlideshow();
+    }
+
+    function download(url, filename) {
+      addDownload(url, filename);
+      const a = document.createElement('a');
+      a.href = url; a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+    }
+
+    function addDownload(url, filename, meta='') {
+      const card = document.createElement('div');
+      card.className = 'glass rounded-xl p-3 flex items-center justify-between';
+      const left = document.createElement('div');
+      left.innerHTML = `<div class="font-medium">${filename}</div><div class="text-xs text-white/70">${meta}</div>`;
+      const right = document.createElement('div');
+      const a = document.createElement('a');
+      a.href = url; a.download = filename;
+      a.className = 'btn btn-primary';
+      a.textContent = 'Download';
+      right.appendChild(a);
+      card.appendChild(left);
+      card.appendChild(right);
+      downloads.prepend(card);
+    }
+
+    // Wire up UI
+    btnStart.addEventListener('click', startCamera);
+    btnFlip.addEventListener('click', flipCamera);
+    btnSnap.addEventListener('click', snap);
+    btnClear.addEventListener('click', clearAll);
+    delayMs.addEventListener('change', () => { if (state.frames.length >= 2) startSlideshow(); });
+
+    btnExportGif.addEventListener('click', exportGIF);
+    btnExportVideo.addEventListener('click', exportVideo);
+
+    // Autostart camera if permissions previously granted
+    (async () => {
+      try {
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        const hasCam = devices.some(d => d.kind === 'videoinput');
+        if (hasCam) startCamera();
+      } catch {}
+    })();
+  })();
+  </script>
+</body>
+</html>
