@@ -34,30 +34,37 @@
     <!-- Camera + capture -->
     <section class="grid md:grid-cols-2 gap-6">
       <div class="glass rounded-2xl p-4 space-y-4">
-        <div class="flex items-center justify-between">
-          <h2 class="text-lg font-medium">Live Camera</h2>
-          <div class="flex gap-2">
-            <button id="btnStart" class="btn btn-primary">Start Camera</button>
-            <button id="btnFlip" class="btn btn-ghost" title="Flip camera">Flip</button>
+        <div class="flex items-start justify-between flex-wrap gap-3">
+          <div>
+            <h2 class="text-lg font-medium">Live Camera</h2>
+            <p class="text-sm text-white/70">Tap the preview to capture frames.</p>
+          </div>
+          <button id="btnFlip" class="btn btn-ghost" title="Flip camera">Flip</button>
+        </div>
+        <div id="camTap" class="relative rounded-2xl overflow-hidden group cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70" role="button" tabindex="0" aria-label="Tap the live camera view to snap a photo">
+          <video id="cam" playsinline autoplay muted class="w-full bg-black aspect-[3/4] md:aspect-video pointer-events-none select-none"></video>
+          <div id="camHint" class="absolute bottom-4 left-1/2 -translate-x-1/2 px-4 py-2 bg-black/60 rounded-full text-xs font-medium tracking-wide flex items-center gap-2 pointer-events-none transition-all group-hover:bg-black/70">
+            <span aria-hidden="true">📸</span>
+            <span>Tap anywhere to snap</span>
           </div>
         </div>
-        <video id="cam" playsinline autoplay muted class="w-full bg-black aspect-[3/4] md:aspect-video"></video>
-        <button id="btnSnap" class="btn btn-primary w-full">Snap Photo</button>
       </div>
 
       <div class="glass rounded-2xl p-4 space-y-4">
-        <div class="flex items-center justify-between">
+        <div class="flex items-center justify-between flex-wrap gap-2">
           <h2 class="text-lg font-medium">Preview / Slideshow</h2>
-          <div class="flex items-center gap-3">
-            <label class="text-sm text-white/80">Delay
-              <input id="delayMs" type="number" min="100" step="50" value="500"
-                     class="ml-2 w-20 rounded-md bg-white/10 border border-white/20 px-2 py-1">
-              ms
-            </label>
-            <button id="btnClear" class="btn btn-ghost">Clear</button>
-          </div>
+          <button id="btnClear" class="btn btn-ghost">Clear</button>
         </div>
         <canvas id="stage" class="w-full bg-black aspect-video"></canvas>
+        <div class="space-y-2">
+          <div class="flex items-center justify-between text-sm text-white/80">
+            <span class="font-medium">Speed</span>
+            <span id="speedValue" class="text-xs text-white/60">500 ms</span>
+          </div>
+          <input id="speedControl" type="range" min="100" max="500" step="50" value="500"
+                 class="w-full accent-white cursor-pointer">
+          <p class="text-xs text-white/60">Drag left for faster loops, right for slower.</p>
+        </div>
         <div id="thumbs" class="grid grid-cols-6 gap-2 max-h-36 overflow-auto"></div>
       </div>
     </section>
@@ -118,18 +125,19 @@
     // Elements
     const el = (id) => document.getElementById(id);
     const cam = el('cam');
+    const camTap = el('camTap');
+    const camHint = el('camHint');
     const stage = el('stage');
     const ctx = stage.getContext('2d');
-    const btnStart = el('btnStart');
     const btnFlip = el('btnFlip');
-    const btnSnap = el('btnSnap');
     const btnClear = el('btnClear');
     const btnExportGif = el('btnExportGif');
     const btnExportVideo = el('btnExportVideo');
     const thumbs = el('thumbs');
     const frameCount = el('frameCount');
     const statusBadge = el('status');
-    const delayMs = el('delayMs');
+    const speedControl = el('speedControl');
+    const speedValue = el('speedValue');
     const gifWidth = el('gifWidth');
     const loops = el('loops');
     const fps = el('fps');
@@ -148,6 +156,15 @@
         const h = dstH, w = Math.round(dstH * srcAR);
         return { sx: 0, sy: 0, sw: srcW, sh: srcH, dx: Math.round((dstW - w) / 2), dy: 0, dw: w, dh: h };
       }
+    };
+    const getSpeedMs = () => {
+      if (!speedControl) return 500;
+      return Math.max(100, Number(speedControl.value) || 500);
+    };
+    const updateSpeedLabel = () => {
+      const ms = getSpeedMs();
+      if (speedValue) speedValue.textContent = `${ms} ms`;
+      return ms;
     };
 
     // Camera control
@@ -197,6 +214,10 @@
       // Convert to ImageBitmap for efficient slideshow drawing
       const bmp = await createImageBitmap(temp);
       state.frames.push(bmp);
+      if (state.frames.length === 1 && camHint) {
+        camHint.classList.add('hidden');
+        camHint.setAttribute('aria-hidden', 'true');
+      }
 
       // Thumb for UI
       const fit = document.createElement('canvas');
@@ -237,15 +258,16 @@
 
     function startSlideshow() {
       stopSlideshow();
-      state.delay = Math.max(100, Number(delayMs.value) || 500);
-      setStatus(`slideshow ${state.delay}ms`);
+      const delay = updateSpeedLabel();
+      state.delay = delay;
+      setStatus(`slideshow ${delay}ms`);
       state.slideIndex = 0;
       state.slideshowTimer = setInterval(() => {
         if (state.frames.length === 0) return;
         const bmp = state.frames[state.slideIndex % state.frames.length];
         drawFrame(bmp);
         state.slideIndex++;
-      }, state.delay);
+      }, delay);
     }
 
     function stopSlideshow() {
@@ -263,7 +285,32 @@
       updateCount();
       renderThumbs();
       ctx.clearRect(0, 0, stage.width, stage.height);
+      if (camHint) {
+        camHint.classList.remove('hidden');
+        camHint.removeAttribute('aria-hidden');
+      }
       setStatus('cleared');
+    }
+
+    function handleCamTap() {
+      if (!state.stream || !state.stream.active) {
+        startCamera();
+        return;
+      }
+      snap();
+    }
+
+    function handleCamKey(e) {
+      if (e.key === 'Enter' || e.key === ' ' || e.key === 'Spacebar') {
+        e.preventDefault();
+        handleCamTap();
+      }
+    }
+
+    function handleSpeedChange() {
+      const ms = updateSpeedLabel();
+      state.delay = ms;
+      if (state.frames.length >= 2) startSlideshow();
     }
 
     // Export GIF
@@ -272,7 +319,7 @@
         alert('Snap at least 1 frame first.');
         return;
       }
-      const delay = Math.max(100, Number(delayMs.value) || 500);
+      const delay = getSpeedMs();
       const repeat = Math.max(1, Number(loops.value) || 1);
       const targetW = Math.max(64, Number(gifWidth.value) || 640);
 
@@ -321,7 +368,7 @@
         alert('Snap at least 1 frame first.');
         return;
       }
-      const frameDelay = Math.max(100, Number(delayMs.value) || 500);
+      const frameDelay = getSpeedMs();
       const exportFps = Math.max(1, Number(fps.value) || 2);
       const repeat = Math.max(1, Number(loopsVid.value) || 1);
       const totalFrames = state.frames.length * repeat;
@@ -415,14 +462,18 @@
     }
 
     // Wire up UI
-    btnStart.addEventListener('click', startCamera);
     btnFlip.addEventListener('click', flipCamera);
-    btnSnap.addEventListener('click', snap);
     btnClear.addEventListener('click', clearAll);
-    delayMs.addEventListener('change', () => { if (state.frames.length >= 2) startSlideshow(); });
+    if (camTap) {
+      camTap.addEventListener('click', handleCamTap);
+      camTap.addEventListener('keydown', handleCamKey);
+    }
+    if (speedControl) speedControl.addEventListener('input', handleSpeedChange);
 
     btnExportGif.addEventListener('click', exportGIF);
     btnExportVideo.addEventListener('click', exportVideo);
+
+    updateSpeedLabel();
 
     // Autostart camera if permissions previously granted
     (async () => {
