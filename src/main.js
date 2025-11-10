@@ -1,5 +1,20 @@
 import './style.css';
 
+// Register a no-cache service worker so the app is installable as a PWA.
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    try {
+      const scopeURL = new URL(import.meta.env.BASE_URL, window.location.href);
+      const swURL = new URL('sw.js', scopeURL);
+      navigator.serviceWorker.register(swURL.href, { scope: scopeURL.href }).catch((err) => {
+        console.error('Service worker registration failed:', err);
+      });
+    } catch (err) {
+      console.error('Service worker registration error:', err);
+    }
+  });
+}
+
 (() => {
   const supportsFileSystemAccess = typeof window.showDirectoryPicker === 'function';
 
