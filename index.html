@@ -73,7 +73,11 @@
       color: rgba(255,255,255,0.85);
     }
     .thumb { aspect-ratio: 1/1; object-fit: cover; }
-    video, canvas { border-radius: 1rem; } 
+    video, canvas { border-radius: 1rem; }
+    .ghost-overlay {
+      opacity: 0.4;
+      transition: opacity 0.2s ease;
+    }
   </style>
 </head>
 <body class="text-white">
@@ -98,10 +102,27 @@
         </div>
         <div id="camTap" class="relative rounded-2xl overflow-hidden group cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70" role="button" tabindex="0" aria-label="Tap the live camera view to snap a photo">
           <video id="cam" playsinline autoplay muted class="w-full bg-black aspect-[3/4] md:aspect-video pointer-events-none select-none"></video>
+          <canvas id="ghostOverlay" class="ghost-overlay absolute inset-0 w-full h-full opacity-0 pointer-events-none" aria-hidden="true"></canvas>
           <div id="camHint" class="absolute bottom-4 left-1/2 -translate-x-1/2 px-4 py-2 bg-black/60 rounded-full text-xs font-medium tracking-wide flex items-center gap-2 pointer-events-none transition-all group-hover:bg-black/70">
             <span aria-hidden="true">📸</span>
             <span>Tap anywhere to snap</span>
           </div>
+        </div>
+        <div class="space-y-2">
+          <div class="flex items-center justify-between text-sm text-white/80">
+            <span class="font-medium">Onion Skin</span>
+            <span id="ghostOpacityValue" class="text-xs text-white/60">50%</span>
+          </div>
+          <input id="ghostOpacityControl" type="range" min="0" max="90" step="5" value="50" list="ghostStops"
+                 class="w-full accent-white cursor-pointer">
+          <datalist id="ghostStops">
+            <option value="0" label="0%"></option>
+            <option value="25" label="25%"></option>
+            <option value="50" label="50%"></option>
+            <option value="75" label="75%"></option>
+            <option value="90" label="90%"></option>
+          </datalist>
+          <p class="text-xs text-white/60">Translucent layer of previous pictures.</p>
         </div>
       </div>
 
@@ -125,7 +146,10 @@
                  class="w-full accent-white cursor-pointer">
           <p class="text-xs text-white/60">Drag left for faster loops, right for slower.</p>
         </div>
-        <div id="thumbs" class="grid grid-cols-6 gap-2 max-h-36 overflow-auto"></div>
+        <div class="space-y-1">
+          <div id="thumbs" class="grid grid-cols-6 gap-2 max-h-36 overflow-auto"></div>
+          <p class="text-[11px] text-white/50">Tip: tap a thumbnail to delete that frame.</p>
+        </div>
       </div>
     </section>
 
@@ -181,7 +205,10 @@
       delay: 500,
       stageSize: { w: 1280, h: 720 },
       isPaused: false,
+      ghostOpacity: 0.5,
     };
+
+    const ghostStops = [0, 25, 50, 75, 90];
 
     // Elements
     const el = (id) => document.getElementById(id);
@@ -206,6 +233,10 @@
     const fps = el('fps');
     const loopsVid = el('loopsVid');
     const downloads = el('downloads');
+    const ghostOpacityControl = el('ghostOpacityControl');
+    const ghostOpacityValue = el('ghostOpacityValue');
+    const ghostCanvas = el('ghostOverlay');
+    const ghostCtx = ghostCanvas ? ghostCanvas.getContext('2d') : null;
 
     // Utils
     const setStatus = (s) => (statusBadge.textContent = s);
@@ -249,6 +280,47 @@
       }
       slideshowHint.textContent = isPlaying ? 'Tap preview to pause' : 'Paused — tap to resume';
     };
+    const snapGhostOpacity = (val) => {
+      if (!Number.isFinite(val)) return ghostStops[0];
+      return ghostStops.reduce((closest, stop) => {
+        return Math.abs(stop - val) < Math.abs(closest - val) ? stop : closest;
+      }, ghostStops[0]);
+    };
+
+    const syncGhostDimensions = () => {
+      if (!ghostCanvas || !cam.videoWidth || !cam.videoHeight) return;
+      ghostCanvas.width = cam.videoWidth;
+      ghostCanvas.height = cam.videoHeight;
+    };
+
+    const refreshGhostOverlay = () => {
+      if (!ghostCanvas || !ghostCtx) return;
+      const lastFrame = state.frames[state.frames.length - 1];
+      const shouldShow = !!lastFrame && state.ghostOpacity > 0;
+      if (!shouldShow) {
+        ghostCtx.clearRect(0, 0, ghostCanvas.width || 0, ghostCanvas.height || 0);
+        ghostCanvas.classList.add('opacity-0');
+        ghostCanvas.setAttribute('aria-hidden', 'true');
+        return;
+      }
+      if (!ghostCanvas.width || !ghostCanvas.height) {
+        syncGhostDimensions();
+      }
+      const targetW = ghostCanvas.width || state.stageSize.w;
+      const targetH = ghostCanvas.height || state.stageSize.h;
+      ghostCtx.clearRect(0, 0, targetW, targetH);
+      const box = aspectFit(lastFrame.width, lastFrame.height, targetW, targetH);
+      ghostCtx.globalAlpha = state.ghostOpacity;
+      ghostCtx.drawImage(
+        lastFrame,
+        box.sx, box.sy, box.sw, box.sh,
+        box.dx, box.dy, box.dw, box.dh
+      );
+      ghostCtx.globalAlpha = 1;
+      ghostCanvas.classList.remove('opacity-0');
+      ghostCanvas.removeAttribute('aria-hidden');
+    };
+
     syncStageDimensions();
 
     // Camera control
@@ -264,6 +336,8 @@
         });
         cam.srcObject = state.stream;
         await cam.play();
+        syncGhostDimensions();
+        refreshGhostOverlay();
 
         // Initialize stage size to match the camera aspect (landscape default with letterbox in UI)
         const vW = cam.videoWidth || 1280;
@@ -323,6 +397,7 @@
       if (state.frames.length === 1) drawFrame(bmp);
       if (state.frames.length >= 2) startSlideshow();
       updateSlideshowHint();
+      refreshGhostOverlay();
     }
 
     function renderThumbs() {
@@ -330,10 +405,56 @@
       state.thumbs.forEach((src, i) => {
         const img = document.createElement('img');
         img.src = src;
-        img.className = 'thumb w-full rounded-lg border border-white/10';
-        img.title = `Frame ${i+1}`;
+        img.className = 'thumb w-full rounded-lg border border-white/10 cursor-pointer focus-visible:outline focus-visible:outline-2 focus-visible:outline-white/70';
+        img.title = `Remove frame ${i + 1}`;
+        img.setAttribute('role', 'button');
+        img.tabIndex = 0;
+        img.setAttribute('aria-label', `Remove frame ${i + 1}`);
+        const remove = () => removeFrameAt(i);
+        img.addEventListener('click', remove);
+        img.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter' || e.key === ' ' || e.key === 'Spacebar') {
+            e.preventDefault();
+            remove();
+          }
+        });
         thumbs.appendChild(img);
       });
+    }
+
+    function removeFrameAt(index) {
+      if (index < 0 || index >= state.frames.length) return;
+      const wasPlaying = !!state.slideshowTimer;
+      const [removed] = state.frames.splice(index, 1);
+      if (removed && typeof removed.close === 'function') removed.close();
+      state.thumbs.splice(index, 1);
+      if (state.slideIndex >= state.frames.length) {
+        state.slideIndex = Math.max(0, state.frames.length - 1);
+      }
+      updateCount();
+      renderThumbs();
+
+      if (state.frames.length === 0) {
+        stopSlideshow();
+        ctx.clearRect(0, 0, stage.width, stage.height);
+        if (camHint) {
+          camHint.classList.remove('hidden');
+          camHint.removeAttribute('aria-hidden');
+        }
+        setStatus('no frames');
+      } else {
+        if (state.frames.length < 2) {
+          stopSlideshow();
+        } else if (wasPlaying) {
+          startSlideshow(true);
+        }
+        const nextFrame = state.frames[state.slideIndex % state.frames.length];
+        drawFrame(nextFrame);
+        setStatus('frame removed');
+      }
+
+      refreshGhostOverlay();
+      updateSlideshowHint();
     }
 
     // Draw a single ImageBitmap to stage (letterboxed)
@@ -377,6 +498,7 @@
       updateCount();
       renderThumbs();
       ctx.clearRect(0, 0, stage.width, stage.height);
+      refreshGhostOverlay();
       if (camHint) {
         camHint.classList.remove('hidden');
         camHint.removeAttribute('aria-hidden');
@@ -431,6 +553,20 @@
         e.preventDefault();
         handleSlideshowTap();
       }
+    }
+
+    function updateGhostOpacityLabel() {
+      if (!ghostOpacityValue || !ghostOpacityControl) return;
+      ghostOpacityValue.textContent = `${ghostOpacityControl.value}%`;
+    }
+
+    function handleGhostOpacityChange() {
+      if (!ghostOpacityControl) return;
+      const snapped = snapGhostOpacity(Number(ghostOpacityControl.value) || 0);
+      ghostOpacityControl.value = snapped;
+      state.ghostOpacity = snapped / 100;
+      updateGhostOpacityLabel();
+      refreshGhostOverlay();
     }
 
     // Export GIF
@@ -593,12 +729,23 @@
       slideshowTap.addEventListener('click', handleSlideshowTap);
       slideshowTap.addEventListener('keydown', handleSlideshowKey);
     }
+    if (ghostOpacityControl) {
+      ghostOpacityControl.addEventListener('input', handleGhostOpacityChange);
+      ghostOpacityControl.addEventListener('change', handleGhostOpacityChange);
+    }
+    if (cam) {
+      cam.addEventListener('loadedmetadata', () => {
+        syncGhostDimensions();
+        refreshGhostOverlay();
+      }, { once: false });
+    }
 
     btnExportGif.addEventListener('click', exportGIF);
     btnExportVideo.addEventListener('click', exportVideo);
 
     updateSpeedLabel();
     updateSlideshowHint();
+    handleGhostOpacityChange();
 
     // Autostart camera if permissions previously granted
     (async () => {
