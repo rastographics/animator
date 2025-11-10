@@ -1,4 +1,5 @@
 import './style.css';
+import gifWorkerUrl from '../assets/gif.worker.js?url';
 
 // Register a no-cache service worker so the app is installable as a PWA.
 if ('serviceWorker' in navigator) {
@@ -16,6 +17,7 @@ if ('serviceWorker' in navigator) {
 }
 
 (() => {
+  const GIF_WORKER_SCRIPT = gifWorkerUrl || 'assets/gif.worker.js';
   const supportsFileSystemAccess = typeof window.showDirectoryPicker === 'function';
 
   const state = {
@@ -703,7 +705,7 @@ if ('serviceWorker' in navigator) {
     const gif = new GIF({
       workers: 2,
       quality: 10,         // lower = better quality, bigger file
-      workerScript: 'assets/gif.worker.js',
+      workerScript: GIF_WORKER_SCRIPT,
       width: targetW,
       height: targetH
     });
