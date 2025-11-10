@@ -67,6 +67,7 @@ if ('serviceWorker' in navigator) {
   const gifWidth = el('gifWidth');
   const loops = el('loops');
   const loopsVid = el('loopsVid');
+  const gifCompression = el('gifCompression');
   const downloads = el('downloads');
   const ghostOpacityControl = el('ghostOpacityControl');
   const ghostOpacityValue = el('ghostOpacityValue');
@@ -700,7 +701,8 @@ if ('serviceWorker' in navigator) {
     const ar = ref.width / ref.height || 1;
     const targetH = Math.max(1, Math.round(targetW / ar));
 
-    setStatus('rendering GIF…');
+    const useCompression = gifCompression && gifCompression.checked;
+    setStatus(useCompression ? 'rendering GIF (compressed)…' : 'rendering GIF…');
 
     // Prepare a working canvas at export size
     const work = document.createElement('canvas');
@@ -712,7 +714,11 @@ if ('serviceWorker' in navigator) {
       quality: 10,         // lower = better quality, bigger file
       workerScript: GIF_WORKER_SCRIPT,
       width: targetW,
-      height: targetH
+      height: targetH,
+      ...(useCompression && {
+        dither: 'FloydSteinberg',
+        globalPalette: true
+      })
     });
 
     const cleanup = () => {
@@ -743,12 +749,13 @@ if ('serviceWorker' in navigator) {
       cleanup();
       const url = URL.createObjectURL(blob);
       download(url, `slideshow_${Date.now()}.gif`);
+      const compressionSuffix = useCompression ? ' (compressed)' : '';
       if (usedFallback) {
-        setStatus('GIF ready (preview fallback)');
+        setStatus(`GIF ready (preview fallback${compressionSuffix})`);
       } else if (usedPreview) {
-        setStatus('GIF ready (preview source)');
+        setStatus(`GIF ready (preview source${compressionSuffix})`);
       } else {
-        setStatus('GIF ready');
+        setStatus(`GIF ready${compressionSuffix}`);
       }
     });
 
