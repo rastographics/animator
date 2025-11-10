@@ -240,27 +240,35 @@ if ('serviceWorker' in navigator) {
     }
   }
 
-  async function loadFullResolutionBitmaps() {
+  async function loadFullResolutionBitmaps(options = {}) {
+    const { preferPreviews = false } = options;
     const entries = [];
     let usedFallback = false;
+    let usedPreview = false;
     for (const frame of state.frames) {
       let bmp = null;
       let volatile = false;
-      if (frame?.fileHandle?.getFile) {
-        try {
-          const file = await frame.fileHandle.getFile();
-          bmp = await createImageBitmap(file);
-          volatile = true;
-        } catch (err) {
-          console.warn('Failed to load full-resolution frame from disk', err);
-        }
+      if (preferPreviews && frame?.preview) {
+        bmp = frame.preview;
+        usedPreview = true;
       }
-      if (!bmp && frame?.memoryBlob) {
-        try {
-          bmp = await createImageBitmap(frame.memoryBlob);
-          volatile = true;
-        } catch (err) {
-          console.warn('Failed to recreate frame from in-memory blob', err);
+      if (!bmp) {
+        if (frame?.fileHandle?.getFile) {
+          try {
+            const file = await frame.fileHandle.getFile();
+            bmp = await createImageBitmap(file);
+            volatile = true;
+          } catch (err) {
+            console.warn('Failed to load full-resolution frame from disk', err);
+          }
+        }
+        if (!bmp && frame?.memoryBlob) {
+          try {
+            bmp = await createImageBitmap(frame.memoryBlob);
+            volatile = true;
+          } catch (err) {
+            console.warn('Failed to recreate frame from in-memory blob', err);
+          }
         }
       }
       if (!bmp && frame?.preview) {
@@ -271,7 +279,7 @@ if ('serviceWorker' in navigator) {
         entries.push({ bmp, volatile });
       }
     }
-    return { entries, usedFallback };
+    return { entries, usedFallback, usedPreview };
   }
 
   const syncGhostDimensions = () => {
@@ -675,7 +683,8 @@ if ('serviceWorker' in navigator) {
     const repeat = Math.max(1, Number(loops.value) || 1);
     const targetW = Math.max(64, Number(gifWidth.value) || 640);
 
-    const { entries, usedFallback } = await loadFullResolutionBitmaps();
+    const preferPreviews = targetW <= PREVIEW_MAX_DIMENSION;
+    const { entries, usedFallback, usedPreview } = await loadFullResolutionBitmaps({ preferPreviews });
     if (!entries.length) {
       alert('Unable to load frames from disk.');
       return;
@@ -727,7 +736,13 @@ if ('serviceWorker' in navigator) {
       cleanup();
       const url = URL.createObjectURL(blob);
       download(url, `slideshow_${Date.now()}.gif`);
-      setStatus(usedFallback ? 'GIF ready (preview fallback)' : 'GIF ready');
+      if (usedFallback) {
+        setStatus('GIF ready (preview fallback)');
+      } else if (usedPreview) {
+        setStatus('GIF ready (preview source)');
+      } else {
+        setStatus('GIF ready');
+      }
     });
 
     gif.render();
