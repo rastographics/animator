@@ -51,11 +51,16 @@
       </div>
 
       <div class="glass rounded-2xl p-4 space-y-4">
-        <div class="flex items-center justify-between flex-wrap gap-2">
-          <h2 class="text-lg font-medium">Preview / Slideshow</h2>
+        <div class="flex items-start justify-between flex-wrap gap-2">
+          <div>
+            <h2 class="text-lg font-medium">Preview / Slideshow</h2>
+            <p id="slideshowHint" class="text-sm text-white/70">Tap preview to pause</p>
+          </div>
           <button id="btnClear" class="btn btn-ghost">Clear</button>
         </div>
-        <canvas id="stage" class="w-full bg-black aspect-video"></canvas>
+        <div id="slideshowTap" class="relative rounded-2xl overflow-hidden focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70 cursor-pointer" role="button" tabindex="0" aria-label="Tap slideshow preview to pause or resume">
+          <canvas id="stage" class="w-full h-auto bg-black pointer-events-none"></canvas>
+        </div>
         <div class="space-y-2">
           <div class="flex items-center justify-between text-sm text-white/80">
             <span class="font-medium">Speed</span>
@@ -120,6 +125,7 @@
       slideIndex: 0,
       delay: 500,
       stageSize: { w: 1280, h: 720 },
+      isPaused: false,
     };
 
     // Elements
@@ -129,6 +135,8 @@
     const camHint = el('camHint');
     const stage = el('stage');
     const ctx = stage.getContext('2d');
+    const slideshowTap = el('slideshowTap');
+    const slideshowHint = el('slideshowHint');
     const btnFlip = el('btnFlip');
     const btnClear = el('btnClear');
     const btnExportGif = el('btnExportGif');
@@ -157,6 +165,14 @@
         return { sx: 0, sy: 0, sw: srcW, sh: srcH, dx: Math.round((dstW - w) / 2), dy: 0, dw: w, dh: h };
       }
     };
+    const syncStageDimensions = () => {
+      if (!stage) return;
+      stage.width = state.stageSize.w;
+      stage.height = state.stageSize.h;
+      stage.style.aspectRatio = `${state.stageSize.w} / ${state.stageSize.h}`;
+      stage.style.width = '100%';
+      stage.style.height = 'auto';
+    };
     const getSpeedMs = () => {
       if (!speedControl) return 500;
       return Math.max(100, Number(speedControl.value) || 500);
@@ -166,6 +182,19 @@
       if (speedValue) speedValue.textContent = `${ms} ms`;
       return ms;
     };
+    const updateSlideshowHint = () => {
+      if (!slideshowHint || !slideshowTap) return;
+      const hasLoop = state.frames.length >= 2;
+      const isPlaying = !!state.slideshowTimer;
+      slideshowTap.setAttribute('aria-pressed', isPlaying ? 'true' : 'false');
+      slideshowTap.setAttribute('aria-disabled', hasLoop ? 'false' : 'true');
+      if (!hasLoop) {
+        slideshowHint.textContent = 'Add 2+ frames to enable slideshow';
+        return;
+      }
+      slideshowHint.textContent = isPlaying ? 'Tap preview to pause' : 'Paused — tap to resume';
+    };
+    syncStageDimensions();
 
     // Camera control
     async function startCamera() {
@@ -184,10 +213,13 @@
         // Initialize stage size to match the camera aspect (landscape default with letterbox in UI)
         const vW = cam.videoWidth || 1280;
         const vH = cam.videoHeight || 720;
-        const landscape = vW >= vH;
-        state.stageSize = landscape ? { w: 1280, h: 720 } : { w: 720, h: 1280 };
-        stage.width = state.stageSize.w;
-        stage.height = state.stageSize.h;
+        const maxDim = 1280;
+        const scale = Math.min(1, maxDim / Math.max(vW, vH));
+        state.stageSize = {
+          w: Math.round(vW * scale) || 1280,
+          h: Math.round(vH * scale) || 720
+        };
+        syncStageDimensions();
         setStatus('camera ready');
       } catch (err) {
         console.error(err);
@@ -235,6 +267,7 @@
       // If first frame, show it. If 2+, (re)start slideshow.
       if (state.frames.length === 1) drawFrame(bmp);
       if (state.frames.length >= 2) startSlideshow();
+      updateSlideshowHint();
     }
 
     function renderThumbs() {
@@ -256,25 +289,29 @@
       ctx.drawImage(bmp, box.sx, box.sy, box.sw, box.sh, box.dx, box.dy, box.dw, box.dh);
     }
 
-    function startSlideshow() {
-      stopSlideshow();
+    function startSlideshow(keepIndex = false) {
+      stopSlideshow(true);
       const delay = updateSpeedLabel();
       state.delay = delay;
       setStatus(`slideshow ${delay}ms`);
-      state.slideIndex = 0;
+      if (!keepIndex) state.slideIndex = 0;
       state.slideshowTimer = setInterval(() => {
         if (state.frames.length === 0) return;
         const bmp = state.frames[state.slideIndex % state.frames.length];
         drawFrame(bmp);
         state.slideIndex++;
       }, delay);
+      state.isPaused = false;
+      updateSlideshowHint();
     }
 
-    function stopSlideshow() {
+    function stopSlideshow(preserveState = false) {
       if (state.slideshowTimer) {
         clearInterval(state.slideshowTimer);
         state.slideshowTimer = null;
       }
+      if (!preserveState) state.isPaused = false;
+      updateSlideshowHint();
     }
 
     function clearAll() {
@@ -290,6 +327,7 @@
         camHint.removeAttribute('aria-hidden');
       }
       setStatus('cleared');
+      updateSlideshowHint();
     }
 
     function handleCamTap() {
@@ -310,7 +348,34 @@
     function handleSpeedChange() {
       const ms = updateSpeedLabel();
       state.delay = ms;
-      if (state.frames.length >= 2) startSlideshow();
+      if (state.frames.length >= 2 && state.slideshowTimer) {
+        startSlideshow(true);
+      }
+    }
+
+    function toggleSlideshow() {
+      if (state.frames.length < 2) return;
+      if (state.slideshowTimer) {
+        stopSlideshow(true);
+        state.isPaused = true;
+        setStatus('slideshow paused');
+      } else {
+        state.isPaused = false;
+        startSlideshow(true);
+      }
+      updateSlideshowHint();
+    }
+
+    function handleSlideshowTap() {
+      if (state.frames.length < 2) return;
+      toggleSlideshow();
+    }
+
+    function handleSlideshowKey(e) {
+      if (e.key === 'Enter' || e.key === ' ' || e.key === 'Spacebar') {
+        e.preventDefault();
+        handleSlideshowTap();
+      }
     }
 
     // Export GIF
@@ -469,11 +534,16 @@
       camTap.addEventListener('keydown', handleCamKey);
     }
     if (speedControl) speedControl.addEventListener('input', handleSpeedChange);
+    if (slideshowTap) {
+      slideshowTap.addEventListener('click', handleSlideshowTap);
+      slideshowTap.addEventListener('keydown', handleSlideshowKey);
+    }
 
     btnExportGif.addEventListener('click', exportGIF);
     btnExportVideo.addEventListener('click', exportVideo);
 
     updateSpeedLabel();
+    updateSlideshowHint();
 
     // Autostart camera if permissions previously granted
     (async () => {
