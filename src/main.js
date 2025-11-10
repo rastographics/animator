@@ -20,6 +20,15 @@ if ('serviceWorker' in navigator) {
   const GIF_WORKER_SCRIPT = gifWorkerUrl || 'assets/gif.worker.js';
   const supportsFileSystemAccess = typeof window.showDirectoryPicker === 'function';
 
+  const ghostStops = [0, 25, 50, 75, 90];
+  const SECOND_LAYER_OPACITY_RATIO = 1;
+  const PREVIEW_MAX_DIMENSION = 640;
+  const CAPTURE_MIME = 'image/jpeg';
+  const CAPTURE_QUALITY = 0.98;
+  const EXPORT_VIDEO_FPS = 30;
+  const FASTEST_DELAY_MS = 100;
+  const SLOWEST_DELAY_MS = 500;
+
   const state = {
     stream: null,
     facing: 'environment',
@@ -27,7 +36,7 @@ if ('serviceWorker' in navigator) {
     thumbs: [],          // data URLs for quick thumb rendering
     slideshowTimer: null,
     slideIndex: 0,
-    delay: 500,
+    delay: FASTEST_DELAY_MS,
     stageSize: { w: 1280, h: 720 },
     isPaused: false,
     ghostOpacity: 0.5,
@@ -36,13 +45,6 @@ if ('serviceWorker' in navigator) {
     captureMode: supportsFileSystemAccess ? 'disk' : 'memory',
     memoryNoticeShown: false,
   };
-
-  const ghostStops = [0, 25, 50, 75, 90];
-  const SECOND_LAYER_OPACITY_RATIO = 1;
-  const PREVIEW_MAX_DIMENSION = 640;
-  const CAPTURE_MIME = 'image/jpeg';
-  const CAPTURE_QUALITY = 0.98;
-  const EXPORT_VIDEO_FPS = 30;
 
   // Elements
   const el = (id) => document.getElementById(id);
@@ -94,8 +96,11 @@ if ('serviceWorker' in navigator) {
     stage.style.height = 'auto';
   };
   const getSpeedMs = () => {
-    if (!speedControl) return 500;
-    return Math.max(100, Number(speedControl.value) || 500);
+    if (!speedControl) return FASTEST_DELAY_MS;
+    const raw = Number(speedControl.value);
+    if (!Number.isFinite(raw)) return FASTEST_DELAY_MS;
+    const clamped = Math.min(Math.max(raw, FASTEST_DELAY_MS), SLOWEST_DELAY_MS);
+    return FASTEST_DELAY_MS + SLOWEST_DELAY_MS - clamped;
   };
   const updateSpeedLabel = () => {
     const ms = getSpeedMs();

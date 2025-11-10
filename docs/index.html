@@ -3,11 +3,17 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <meta name="theme-color" content="#0b3db9" />
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Snap-to-Loop">
   <title>Snap-to-Loop — Camera Slideshow</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="apple-touch-icon" sizes="192x192" href="icon-192.png">
   <link rel="preconnect" href="https://unpkg.com">
   <!-- GIF encoder (tiny, battle-tested) -->
   <script src="https://unpkg.com/gif.js@0.2.0/dist/gif.js"></script>
-  <script type="module" crossorigin src="./assets/index-BY6VWP4z.js"></script>
+  <script type="module" crossorigin src="./assets/index-BLTTo7oB.js"></script>
   <link rel="stylesheet" crossorigin href="./assets/index-In671KUZ.css">
 </head>
 <body class="text-white">
@@ -74,11 +80,11 @@
         <div class="space-y-2">
           <div class="flex items-center justify-between text-sm text-white/80">
             <span class="font-medium">Speed</span>
-            <span id="speedValue" class="text-xs text-white/60">500 ms</span>
+            <span id="speedValue" class="text-xs text-white/60">100 ms</span>
           </div>
           <input id="speedControl" type="range" min="100" max="500" step="50" value="500"
                  class="w-full accent-white cursor-pointer">
-          <p class="text-xs text-white/60">Drag left for faster loops, right for slower.</p>
+          <p class="text-xs text-white/60">Drag left for slower loops, right for faster.</p>
         </div>
         <div class="space-y-1">
           <div id="thumbs" class="grid grid-cols-6 gap-2 max-h-36 overflow-auto"></div>
