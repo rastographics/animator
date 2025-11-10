@@ -122,6 +122,10 @@
             <option value="75" label="75%"></option>
             <option value="90" label="90%"></option>
           </datalist>
+          <label class="flex items-center gap-2 text-sm text-white/80">
+            <input id="ghostSecondLayerToggle" type="checkbox" class="accent-white" checked>
+            Show second onion layer
+          </label>
           <p class="text-xs text-white/60">Translucent layer of previous pictures.</p>
         </div>
       </div>
@@ -206,9 +210,11 @@
       stageSize: { w: 1280, h: 720 },
       isPaused: false,
       ghostOpacity: 0.5,
+      ghostSecondLayerEnabled: true,
     };
 
     const ghostStops = [0, 25, 50, 75, 90];
+    const SECOND_LAYER_OPACITY_RATIO = 1;
 
     // Elements
     const el = (id) => document.getElementById(id);
@@ -237,6 +243,7 @@
     const ghostOpacityValue = el('ghostOpacityValue');
     const ghostCanvas = el('ghostOverlay');
     const ghostCtx = ghostCanvas ? ghostCanvas.getContext('2d') : null;
+    const ghostSecondLayerToggle = el('ghostSecondLayerToggle');
 
     // Utils
     const setStatus = (s) => (statusBadge.textContent = s);
@@ -295,8 +302,19 @@
 
     const refreshGhostOverlay = () => {
       if (!ghostCanvas || !ghostCtx) return;
-      const lastFrame = state.frames[state.frames.length - 1];
-      const shouldShow = !!lastFrame && state.ghostOpacity > 0;
+      const baseOpacity = state.ghostOpacity;
+      const overlays = [];
+      const lastIndex = state.frames.length - 1;
+      if (state.ghostSecondLayerEnabled && lastIndex - 1 >= 0) {
+        overlays.push({
+          bmp: state.frames[lastIndex - 1],
+          opacity: Math.min(1, Math.max(0, baseOpacity * SECOND_LAYER_OPACITY_RATIO))
+        });
+      }
+      if (lastIndex >= 0) {
+        overlays.push({ bmp: state.frames[lastIndex], opacity: baseOpacity });
+      }
+      const shouldShow = overlays.some(layer => layer.opacity > 0);
       if (!shouldShow) {
         ghostCtx.clearRect(0, 0, ghostCanvas.width || 0, ghostCanvas.height || 0);
         ghostCanvas.classList.add('opacity-0');
@@ -309,13 +327,15 @@
       const targetW = ghostCanvas.width || state.stageSize.w;
       const targetH = ghostCanvas.height || state.stageSize.h;
       ghostCtx.clearRect(0, 0, targetW, targetH);
-      const box = aspectFit(lastFrame.width, lastFrame.height, targetW, targetH);
-      ghostCtx.globalAlpha = state.ghostOpacity;
-      ghostCtx.drawImage(
-        lastFrame,
-        box.sx, box.sy, box.sw, box.sh,
-        box.dx, box.dy, box.dw, box.dh
-      );
+      overlays.forEach(layer => {
+        const box = aspectFit(layer.bmp.width, layer.bmp.height, targetW, targetH);
+        ghostCtx.globalAlpha = layer.opacity;
+        ghostCtx.drawImage(
+          layer.bmp,
+          box.sx, box.sy, box.sw, box.sh,
+          box.dx, box.dy, box.dw, box.dh
+        );
+      });
       ghostCtx.globalAlpha = 1;
       ghostCanvas.classList.remove('opacity-0');
       ghostCanvas.removeAttribute('aria-hidden');
@@ -569,6 +589,12 @@
       refreshGhostOverlay();
     }
 
+    function handleGhostSecondLayerToggle() {
+      if (!ghostSecondLayerToggle) return;
+      state.ghostSecondLayerEnabled = ghostSecondLayerToggle.checked;
+      refreshGhostOverlay();
+    }
+
     // Export GIF
     async function exportGIF() {
       if (state.frames.length === 0) {
@@ -733,6 +759,9 @@
       ghostOpacityControl.addEventListener('input', handleGhostOpacityChange);
       ghostOpacityControl.addEventListener('change', handleGhostOpacityChange);
     }
+    if (ghostSecondLayerToggle) {
+      ghostSecondLayerToggle.addEventListener('change', handleGhostSecondLayerToggle);
+    }
     if (cam) {
       cam.addEventListener('loadedmetadata', () => {
         syncGhostDimensions();
@@ -746,6 +775,7 @@
     updateSpeedLabel();
     updateSlideshowHint();
     handleGhostOpacityChange();
+    handleGhostSecondLayerToggle();
 
     // Autostart camera if permissions previously granted
     (async () => {
