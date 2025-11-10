@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Snap-to-Loop — Camera Slideshow</title>
+  <link rel="preconnect" href="https://unpkg.com">
+  <!-- GIF encoder (tiny, battle-tested) -->
+  <script src="https://unpkg.com/gif.js@0.2.0/dist/gif.js"></script>
+  <script type="module" crossorigin src="./assets/index-BY6VWP4z.js"></script>
+  <link rel="stylesheet" crossorigin href="./assets/index-In671KUZ.css">
+</head>
+<body class="text-white">
+  <main class="max-w-5xl mx-auto p-4 md:p-6 space-y-6">
+    <header class="flex items-center justify-between">
+      <h1 class="text-xl md:text-2xl font-semibold">📸 Snap-to-Loop</h1>
+      <div class="flex items-center gap-2">
+        <span id="frameCount" class="badge">0 frames</span>
+        <span id="status" class="badge">idle</span>
+      </div>
+    </header>
+
+    <!-- Camera + capture -->
+    <section class="grid md:grid-cols-2 gap-6">
+      <div class="glass rounded-2xl p-4 space-y-4">
+        <div class="flex items-start justify-between flex-wrap gap-3">
+          <div>
+            <h2 class="text-lg font-medium">Live Camera</h2>
+            <p class="text-sm text-white/70">Tap the preview to capture frames.</p>
+          </div>
+          <button id="btnFlip" class="btn btn-ghost" title="Flip camera">Flip</button>
+        </div>
+        <div id="camTap" class="relative rounded-2xl overflow-hidden group cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70" role="button" tabindex="0" aria-label="Tap the live camera view to snap a photo">
+          <video id="cam" playsinline autoplay muted class="w-full h-full bg-black pointer-events-none select-none object-cover"></video>
+          <canvas id="ghostOverlay" class="ghost-overlay absolute inset-0 w-full h-full opacity-0 pointer-events-none" aria-hidden="true"></canvas>
+          <div id="camHint" class="absolute bottom-4 left-1/2 -translate-x-1/2 px-4 py-2 bg-black/60 rounded-full text-xs font-medium tracking-wide flex items-center gap-2 pointer-events-none transition-all group-hover:bg-black/70">
+            <span aria-hidden="true">📸</span>
+            <span>Tap anywhere to snap</span>
+          </div>
+        </div>
+        <div class="space-y-2">
+          <div class="flex items-center justify-between text-sm text-white/80">
+            <span class="font-medium">Onion Skin</span>
+            <span id="ghostOpacityValue" class="text-xs text-white/60">50%</span>
+          </div>
+          <input id="ghostOpacityControl" type="range" min="0" max="90" step="5" value="90" list="ghostStops"
+                 class="w-full accent-white cursor-pointer">
+          <datalist id="ghostStops">
+            <option value="0" label="0%"></option>
+            <option value="25" label="25%"></option>
+            <option value="50" label="50%"></option>
+            <option value="75" label="75%"></option>
+            <option value="90" label="90%"></option>
+          </datalist>
+          <label class="flex items-center gap-2 text-sm text-white/80">
+            <input id="ghostSecondLayerToggle" type="checkbox" class="accent-white" checked>
+            Show second onion layer
+          </label>
+          <p class="text-xs text-white/60">Translucent layer of previous pictures.</p>
+        </div>
+      </div>
+
+      <div class="glass rounded-2xl p-4 space-y-4">
+        <div class="flex items-start justify-between flex-wrap gap-2">
+          <div>
+            <h2 class="text-lg font-medium">Preview / Slideshow</h2>
+            <p id="slideshowHint" class="text-sm text-white/70">Tap preview to pause</p>
+          </div>
+          <button id="btnClear" class="btn btn-ghost">Clear</button>
+        </div>
+        <div id="slideshowTap" class="relative rounded-2xl overflow-hidden focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70 cursor-pointer" role="button" tabindex="0" aria-label="Tap slideshow preview to pause or resume">
+          <canvas id="stage" class="w-full h-auto bg-black pointer-events-none"></canvas>
+        </div>
+        <div class="space-y-2">
+          <div class="flex items-center justify-between text-sm text-white/80">
+            <span class="font-medium">Speed</span>
+            <span id="speedValue" class="text-xs text-white/60">500 ms</span>
+          </div>
+          <input id="speedControl" type="range" min="100" max="500" step="50" value="500"
+                 class="w-full accent-white cursor-pointer">
+          <p class="text-xs text-white/60">Drag left for faster loops, right for slower.</p>
+        </div>
+        <div class="space-y-1">
+          <div id="thumbs" class="grid grid-cols-6 gap-2 max-h-36 overflow-auto"></div>
+          <p class="text-[11px] text-white/50">Tip: tap a thumbnail to delete that frame.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- Export -->
+    <section class="glass rounded-2xl p-4 space-y-3">
+      <h2 class="text-lg font-medium">Export</h2>
+      <div class="grid md:grid-cols-2 gap-4">
+        <div class="space-y-2">
+          <div class="flex items-center gap-3">
+            <label class="text-sm text-white/80">GIF size (px wide)
+              <input id="gifWidth" type="number" min="128" step="64" value="640"
+                     class="ml-2 w-24 rounded-md bg-white/10 border border-white/20 px-2 py-1">
+            </label>
+            <label class="text-sm text-white/80">Loops
+              <input id="loops" type="number" min="1" step="1" value="1"
+                     class="ml-2 w-16 rounded-md bg-white/10 border border-white/20 px-2 py-1">
+            </label>
+          </div>
+          <button id="btnExportGif" class="btn btn-primary w-full">Export GIF</button>
+          <p class="text-xs text-white/70">GIF exports are great for quick sharing, but can be large.</p>
+        </div>
+
+        <div class="space-y-2">
+          <div class="flex items-center gap-3">
+            <label class="text-sm text-white/80">Loops
+              <input id="loopsVid" type="number" min="1" step="1" value="1"
+                     class="ml-2 w-16 rounded-md bg-white/10 border border-white/20 px-2 py-1">
+            </label>
+          </div>
+          <button id="btnExportVideo" class="btn btn-primary w-full">Export Video (WebM/MP4*)</button>
+          <p class="text-xs text-white/70">
+            *Uses the slideshow speed for timing. Most browsers export WebM; Safari may export MP4/H.264.
+          </p>
+        </div>
+      </div>
+      <div id="downloads" class="pt-2 grid md:grid-cols-2 gap-2"></div>
+    </section>
+  </main>
+</body>
+</html>
